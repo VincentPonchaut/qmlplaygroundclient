@@ -1,15 +1,14 @@
 QT += \
-    qml \
-    quick \
+    core gui qml quick \
     quickcontrols2 \
     widgets \
-    core gui qml quick \
     multimedia sql \
     network websockets \
     xml xmlpatterns svg \
     sensors bluetooth nfc \
     positioning location \
-    3dcore 3drender 3dinput 3dquick
+    3dcore 3drender 3dinput 3dquick \
+    webview
 
 CONFIG += c++11
 

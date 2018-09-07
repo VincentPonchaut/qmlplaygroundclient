@@ -2,6 +2,7 @@ import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtWebSockets 1.1
 import Qt.labs.settings 1.0
+import QtWebView 1.1
 
 ApplicationWindow {
     id: window
@@ -15,7 +16,7 @@ ApplicationWindow {
     // ---------------------------------------------------------------------------------
 
     header: ToolBar {
-        contentHeight: toolButton.implicitHeight
+        contentHeight: hostAddressTextField.implicitHeight
 
         TextField {
             id: hostAddressTextField
