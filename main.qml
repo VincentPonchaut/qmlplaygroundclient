@@ -44,8 +44,15 @@ ApplicationWindow {
         active: true
 
         onTextMessageReceived: {
-            print("MESSAGE RECEIVED \n" + message);
-            appControl.onTextMessageReceived(message);
+            //print("MESSAGE RECEIVED \n" + message);
+
+            if (appControl.messageContent(String(message), "messagetype") == "data")
+            {
+                print("MESSAGE RECEIVED \n" + message);
+                parseData(appControl.messageContent(message, "json"));
+            }
+            else
+                appControl.onTextMessageReceived(message);
         }
     }
 
@@ -87,5 +94,17 @@ ApplicationWindow {
         lastObject = Qt.createQmlObject(pQmlStr,
                                         contentPane,
                                         "content_object");
+    }
+
+    function parseData(vDataObject)
+    {
+        // Parse the JSON
+        vDataObject = JSON.parse(vDataObject);
+
+        // Iterate and require property adding
+        for (var vProperty in vDataObject) if (vDataObject.hasOwnProperty(vProperty))
+        {
+            appControl.addContextProperty(vProperty, vDataObject[vProperty]);
+        }
     }
 }

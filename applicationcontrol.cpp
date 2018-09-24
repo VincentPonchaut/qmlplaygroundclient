@@ -18,9 +18,9 @@ inline QString endTag(const QString& tag)
     return "</" + tag + ">";
 }
 
-inline QString messageContent(const QString& message,
-                              const QString& tag,
-                              int fromIndex = 0)
+QString ApplicationControl::messageContent(const QString& message,
+                                           const QString& tag,
+                                           int fromIndex)
 {
     QString bTag = beginTag(tag);
     QString eTag = endTag(tag);
@@ -106,6 +106,11 @@ bool ApplicationControl::writeFileContents(const QString &pFilePath, const QStri
     stream << pFileContents;
 
     return true;
+}
+
+void ApplicationControl::addContextProperty(const QString& pKey, QVariant pData)
+{
+    mEngine->rootContext()->setContextProperty(pKey, pData);
 }
 
 void ApplicationControl::onTextMessageReceived(const QString &pMessage)

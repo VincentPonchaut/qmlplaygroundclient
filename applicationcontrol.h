@@ -23,7 +23,7 @@ public:
     Q_INVOKABLE bool writeFileContents(const QString& pFilePath, const QString& pFileContents);
 
     // TODO
-//    Q_INVOKABLE void addContextProperty(const QString& pKey, QVariant pData);
+    Q_INVOKABLE void addContextProperty(const QString& pKey, QVariant pData);
     Q_INVOKABLE void onTextMessageReceived(const QString& pMessage);
 
     QString currentFile() const;
@@ -31,6 +31,10 @@ public:
 
     QQmlEngine* engine() const;
     void setEngine(QQmlEngine *engine);
+
+    Q_INVOKABLE QString messageContent(const QString& message,
+                                       const QString& tag,
+                                       int fromIndex = 0);
 
 signals:
     void currentFileChanged(QString currentFile);
