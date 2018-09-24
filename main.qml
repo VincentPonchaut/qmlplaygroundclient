@@ -43,7 +43,10 @@ ApplicationWindow {
         url: "ws://%1".arg(hostAddressTextField.text)
         active: true
 
-        onTextMessageReceived: renderQml(message);
+        onTextMessageReceived: {
+            print("MESSAGE RECEIVED \n" + message);
+            appControl.onTextMessageReceived(message);
+        }
     }
 
     Settings {
@@ -53,10 +56,28 @@ ApplicationWindow {
     }
 
     // ---------------------------------------------------------------------------------
+    // View
+    // ---------------------------------------------------------------------------------
+
+    Loader {
+        anchors.fill: parent
+        source: appControl.currentFile
+    }
+
+    // ---------------------------------------------------------------------------------
     // Logic
     // ---------------------------------------------------------------------------------
 
     property var lastObject: null
+
+//    Connections {
+//        target: appControl
+//        onCurrentFileChanged: {
+//            print("hella")
+//            renderQml(appControl.readFileContents(appControl.currentFile));
+//            print("hello")
+//        }
+//    }
 
     function renderQml(pQmlStr)
     {
