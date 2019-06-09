@@ -8,7 +8,11 @@ QT += \
     sensors bluetooth nfc \
     positioning location \
     3dcore 3drender 3dinput 3dquick \
-    webview
+    webview \
+#    charts \
+
+# For ZipReader & ZipWriter
+QT += gui-private
 
 CONFIG += c++11
 
@@ -41,4 +45,5 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
 HEADERS += \
-    applicationcontrol.h
+    applicationcontrol.h \
+    macros.h

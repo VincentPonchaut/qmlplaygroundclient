@@ -16,6 +16,7 @@ ApplicationWindow {
     // ---------------------------------------------------------------------------------
 
     header: ToolBar {
+        width: parent.width // explicit it here to avoid hostAddressTextField not being sized properly
         contentHeight: hostAddressTextField.implicitHeight
 
         TextField {
@@ -54,6 +55,11 @@ ApplicationWindow {
             else
                 appControl.onTextMessageReceived(message);
         }
+
+        onBinaryMessageReceived: {
+            print("Binary message received");
+            appControl.onBinaryMessageReceived(message);
+        }
     }
 
     Settings {
@@ -71,12 +77,46 @@ ApplicationWindow {
         source: appControl.currentFile
     }
 
+    Rectangle {
+        id: loadingOverlay
+        anchors.fill: parent
+        visible: loadingTimer.running
+
+        color: Qt.rgba(0,0,0, 0.6)
+        z: 100
+
+        Timer {
+            id: loadingTimer
+            interval: 1000 // minimum loading time
+            repeat: false;
+            // If after timeout, processing is still ongoing, restart
+            onTriggered: if (appControl.isProcessing) loadingTimer.start()
+        }
+
+        BusyIndicator {
+            id: loadingIndicator
+            anchors.centerIn: parent
+            running: visible
+        }
+        Label {
+            anchors.top: loadingIndicator.bottom
+            anchors.horizontalCenter: loadingIndicator.horizontalCenter
+
+            text: appControl.status
+            font.pointSize: 14
+            font.family: "Segoe UI Light"
+        }
+    }
+
     // ---------------------------------------------------------------------------------
     // Logic
     // ---------------------------------------------------------------------------------
 
     property var lastObject: null
-
+    Connections {
+        target: appControl;
+        onIsProcessingChanged: if (appControl.isProcessing) loadingTimer.start()
+    }
 //    Connections {
 //        target: appControl
 //        onCurrentFileChanged: {

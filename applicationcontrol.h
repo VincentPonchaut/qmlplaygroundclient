@@ -4,13 +4,16 @@
 #include <QObject>
 #include <QQmlEngine>
 
+#include "macros.h"
+
 class ApplicationControl: public QObject
 {
     Q_OBJECT
 
     Q_PROPERTY(QString currentFile READ currentFile WRITE setCurrentFile NOTIFY currentFileChanged)
     Q_PROPERTY(QString currentFolder READ currentFolder WRITE setCurrentFolder NOTIFY currentFolderChanged)
-
+    PROPERTY(bool, isProcessing, setIsProcessing)
+    PROPERTY(QString, status, setStatus)
 
 public:
     explicit ApplicationControl(QObject *parent = nullptr);
@@ -25,6 +28,7 @@ public:
     // TODO
     Q_INVOKABLE void addContextProperty(const QString& pKey, QVariant pData);
     Q_INVOKABLE void onTextMessageReceived(const QString& pMessage);
+    Q_INVOKABLE void onBinaryMessageReceived(const QByteArray& pMessage);
 
     QString currentFile() const;
     QString currentFolder() const;
@@ -40,6 +44,9 @@ signals:
     void currentFileChanged(QString currentFile);
     void currentFolderChanged(QString currentFolder);
 
+    void startedProcessing(QString message);
+    void endedProcessing(QString message);
+
 public slots:
     void setCurrentFile(QString currentFile);
     void setCurrentFolder(QString currentFolder);
@@ -51,10 +58,14 @@ protected:
 
     QString localFilePathFromRemoteFilePath(const QString& pRemoteFile);
 
+    bool uncompressFile(const QString& pZipFile, const QString& pDirectory);
+    bool deleteDirectory(const QString& pDirectory);
+
 private:
     QString m_currentFile;
     QString m_currentFolder;
     QString mWritePath;
+    QString mCurrentProjectPath;
     QQmlEngine *mEngine = nullptr;
 };
 

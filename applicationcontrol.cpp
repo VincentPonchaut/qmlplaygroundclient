@@ -5,6 +5,9 @@
 #include <QDirIterator>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QDataStream>
+#include <private/qzipreader_p.h>
+#include <private/qzipwriter_p.h>
 
 inline QString quoted(const QString& pToQuote) { return "\"" + pToQuote + "\""; }
 
@@ -34,9 +37,12 @@ QString ApplicationControl::messageContent(const QString& message,
     return message.mid(beginIndex + bTag.length(), endIndex - beginIndex - bTag.length());
 }
 
-ApplicationControl::ApplicationControl(QObject *parent) : QObject(parent)
+ApplicationControl::ApplicationControl(QObject *parent)
+    : QObject(parent)
 {
     mWritePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/qmlplaygroundclient_cache";
+    setStatus("");
+    setIsProcessing(false);
 }
 
 ApplicationControl::~ApplicationControl()
@@ -132,6 +138,86 @@ void ApplicationControl::onTextMessageReceived(const QString &pMessage)
     }
 }
 
+void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
+{
+    setStatus("Loading assets...");
+    setIsProcessing(true);
+
+    // Prepare a stream to get fields from the message
+    QByteArray message = pMessage;
+    QDataStream stream(&message, QIODevice::ReadOnly);
+
+    // Prepare fields that will be read
+    QString readProjectName;
+    QByteArray payload;
+    qint32 payloadSize;
+    stream >> readProjectName >> payloadSize;
+
+    // Read the payload (zip file)
+    payload.resize(payloadSize);
+    stream.readRawData(payload.data(), payloadSize);
+    qDebug() << "read project name: " << readProjectName << "read payload size: " << payloadSize;
+
+//    QString filePath = "C:/Users/vincent.ponchaut/Desktop/perso/testzipresult_client/zaza.zip";
+    QString zipFilePath = mWritePath + QString("/projects/%1/%1.zip").arg(readProjectName);
+    QFileInfo fileInfo(zipFilePath);
+    QString projectDir = fileInfo.absolutePath();
+
+    // Ensure resulting directory exists
+    if (!QDir().mkpath(projectDir))
+    {
+        setStatus("Error creating " + projectDir);
+        setIsProcessing(false);
+        return;
+    }
+
+    if (QDir().exists(projectDir) && !deleteDirectory(projectDir))
+    {
+        qDebug() << "Could not cleanup " + projectDir;
+    }
+
+    // Remove previous file if it exists
+    if (fileInfo.exists() && !QFile::remove(zipFilePath))
+    {
+        qDebug() << "Error removing " + zipFilePath;
+        setStatus("Error removing " + zipFilePath);
+        setIsProcessing(false);
+        return;
+    }
+
+    // Create the resulting file
+    QFile file(zipFilePath);
+    if (!file.open(QIODevice::ReadWrite))
+    {
+        qDebug() << "Error: could not open " + zipFilePath;
+        setStatus("Error: could not open " + zipFilePath);
+        setIsProcessing(false);
+        return;
+    }
+
+    // write to it
+    file.write(payload);
+    file.close(); // Important: close before attempting a read
+
+    // Now uncompress the data
+    QZipReader zipReader(zipFilePath);
+    if (!zipReader.status() == QZipReader::NoError ||
+        !zipReader.extractAll(projectDir))
+    {
+        qDebug() << "Error: could not extract " + zipFilePath;
+        setStatus("Error: could not extract " + zipFilePath);
+        setIsProcessing(false);
+        return;
+    }
+
+    // Remove the zip file
+    file.remove();
+
+    mCurrentProjectPath = projectDir;
+    setStatus("Assets loaded.");
+    setIsProcessing(false);
+}
+
 void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
 {
     // Retrieve distant folder name
@@ -141,7 +227,12 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
     qDebug() << "FOLDER: " << folderName;
 
     // Ensure destination folder exists
-    QDir().mkpath(mWritePath);
+    QString projectName = folderName.mid(folderName.lastIndexOf("/") + 1);
+//    QDir().mkpath(mWritePath + "/projects/" + projectName);
+    QString projectPath = mWritePath + "/projects/" + projectName;
+    if (mCurrentProjectPath != projectPath)
+        mCurrentProjectPath = projectPath; // TODO: emit ?
+    QDir().mkpath(mCurrentProjectPath);
 
     // Build file list
     int lastFileIndex = 0;
@@ -155,7 +246,7 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
         localFileName = localFileName.startsWith("/") ? localFileName.remove(0,1) : localFileName;
         qDebug() << "localFileName: " << localFileName;
 
-        createFile(mWritePath,
+        createFile(mCurrentProjectPath,
                    localFileName,
                    currentFileContent);
 
@@ -180,7 +271,7 @@ void ApplicationControl::handleFileChangeMessage(const QString &pMessage)
     QString currentFileNameLocal = localFilePathFromRemoteFilePath(currentFileName);
 
     // Replace contents
-    createFile(mWritePath, currentFileNameLocal, currentFileContent);
+    createFile(mCurrentProjectPath, currentFileNameLocal, currentFileContent);
 
     // Check for a current file change
     handleCurrentFileChangeMessage(pMessage);
@@ -206,9 +297,39 @@ QString ApplicationControl::localFilePathFromRemoteFilePath(const QString &pRemo
     if (localFile.startsWith("/"))
         localFile.remove(0,1);
 
-    localFile = "file:///" + mWritePath + "/" + localFile;
+    localFile = "file:///" + mCurrentProjectPath + "/" + localFile;
 
     return localFile;
+}
+
+bool ApplicationControl::uncompressFile(const QString &pZipFile, const QString &pDirectory)
+{
+    QZipReader zipReader(pZipFile);
+    for (QZipReader::FileInfo item : zipReader.fileInfoList())
+    {
+        qDebug() << item.filePath;
+    }
+    return true;
+}
+
+bool ApplicationControl::deleteDirectory(const QString &pDirectory)
+{
+    bool success = true;
+
+    QDirIterator it(pDirectory, QStringList() << "*", QDir::NoFilter, QDirIterator::Subdirectories);
+    while (it.hasNext())
+    {
+        QString itPath = it.next();
+
+        QFile f(itPath);
+        if (!f.open(QIODevice::ReadWrite))
+            continue;
+
+        success &= f.remove();
+        f.close();
+    }
+
+    return success;
 }
 
 QQmlEngine *ApplicationControl::engine() const
