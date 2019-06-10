@@ -6,6 +6,10 @@
 
 #include "applicationcontrol.h"
 
+#if defined(Q_OS_ANDROID)
+#include "Multicastlock.h"
+#endif
+
 int main(int argc, char *argv[])
 {
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
@@ -16,6 +20,10 @@ int main(int argc, char *argv[])
 
     QGuiApplication app(argc, argv);
     QtWebView::initialize();
+
+#if defined(Q_OS_ANDROID)
+    MulticastLock mcLock; // automatically calls acquire
+#endif
 
     QQmlApplicationEngine engine;
 

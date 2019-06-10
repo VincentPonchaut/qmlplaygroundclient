@@ -4,7 +4,13 @@
 #include <QObject>
 #include <QQmlEngine>
 
+QT_BEGIN_NAMESPACE
+class QUdpSocket;
+QT_END_NAMESPACE
+
 #include "macros.h"
+#include <QHostAddress>
+#include <QUdpSocket>
 
 class ApplicationControl: public QObject
 {
@@ -14,6 +20,8 @@ class ApplicationControl: public QObject
     Q_PROPERTY(QString currentFolder READ currentFolder WRITE setCurrentFolder NOTIFY currentFolderChanged)
     PROPERTY(bool, isProcessing, setIsProcessing)
     PROPERTY(QString, status, setStatus)
+    PROPERTY(QStringList, availableServers, setAvailableServers)
+    PROPERTY(QString, activeServerIp, setActiveServerIp)
 
 public:
     explicit ApplicationControl(QObject *parent = nullptr);
@@ -58,8 +66,10 @@ protected:
 
     QString localFilePathFromRemoteFilePath(const QString& pRemoteFile);
 
-    bool uncompressFile(const QString& pZipFile, const QString& pDirectory);
     bool deleteDirectory(const QString& pDirectory);
+
+protected slots:
+    void processPendingDatagrams();
 
 private:
     QString m_currentFile;
@@ -67,6 +77,11 @@ private:
     QString mWritePath;
     QString mCurrentProjectPath;
     QQmlEngine *mEngine = nullptr;
+
+    QUdpSocket udpSocket4;
+    QUdpSocket udpSocket6;
+    QHostAddress groupAddress4;
+    QHostAddress groupAddress6;
 };
 
 #endif // APPLICATIONCONTROL_H

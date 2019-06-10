@@ -9,24 +9,62 @@ ApplicationWindow {
     visible: true
     width: 640
     height: 480
-    title: qsTr("Stack")
+    title: qsTr("QmlPlaygroundClient")
 
     // ---------------------------------------------------------------------------------
     // View
     // ---------------------------------------------------------------------------------
 
     header: ToolBar {
+        id: toolbar
         width: parent.width // explicit it here to avoid hostAddressTextField not being sized properly
         contentHeight: hostAddressTextField.implicitHeight
 
+        property bool manualMode: false
+
+        padding: 10
+
+        ComboBox {
+            id: serverCombobox
+            width: (parent.width - switchModeButton.width) - 10
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !toolbar.manualMode
+
+            model: appControl.availableServers
+            onModelChanged: refreshActiveIp()
+            onCurrentIndexChanged: refreshActiveIp()
+        }
+
         TextField {
             id: hostAddressTextField
-
-            width: parent.width * 0.88
-            anchors.centerIn: parent
+            width: (parent.width - switchModeButton.width) - 10
+//                anchors.verticalCenter: switchModeButton.verticalCenter
+//            anchors.baseline: switchModeButton.baseline
+//            anchors.baselineOffset: switchModeButton.baselineOffset
+            height: switchModeButton.height
+            anchors.bottom: switchModeButton.bottom
+            visible: toolbar.manualMode
 
             placeholderText: "Enter host ip address (you must be on the same network)"
             onAccepted: focus = false
+            onTextChanged: {
+                if (toolbar.manualMode)
+                    appControl.setActiveServerIp(hostAddressTextField.text)
+            }
+        }
+
+        Button {
+            id: switchModeButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+
+            checkable: true
+            text: !toolbar.manualMode ? "<b><u>Select</u></b>/Manual" :
+                                        "Select/<b><u>Manual</u></b>"
+            onClicked: {
+                toolbar.manualMode = !toolbar.manualMode
+                refreshActiveIp()
+            }
         }
     }
 
@@ -41,7 +79,7 @@ ApplicationWindow {
 
     WebSocket {
         id: socket
-        url: "ws://%1".arg(hostAddressTextField.text)
+        url: "ws://%1".arg(appControl.activeServerIp)
         active: true
 
         onTextMessageReceived: {
@@ -66,6 +104,9 @@ ApplicationWindow {
         id: settings
 
         property alias hostNameAddress: hostAddressTextField.text
+        property alias toolbarmode: toolbar.manualMode
+//        property alias avalaibleServers: appControl.availableServers
+//        property alias comboboxCurrentIndex: serverCombobox.currentIndex
     }
 
     // ---------------------------------------------------------------------------------
@@ -111,6 +152,16 @@ ApplicationWindow {
     // ---------------------------------------------------------------------------------
     // Logic
     // ---------------------------------------------------------------------------------
+
+    Component.onCompleted: {
+        refreshActiveIp()
+    }
+    function refreshActiveIp() {
+        if (toolbar.manualMode)
+            appControl.setActiveServerIp(hostAddressTextField.text)
+        else
+            appControl.setActiveServerIp(serverCombobox.currentText)
+    }
 
     property var lastObject: null
     Connections {

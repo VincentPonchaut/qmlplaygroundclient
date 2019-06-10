@@ -8,11 +8,17 @@ QT += \
     sensors bluetooth nfc \
     positioning location \
     3dcore 3drender 3dinput 3dquick \
-    webview \
+    webview
 #    charts \
 
 # For ZipReader & ZipWriter
 QT += gui-private
+
+# For network capabilities
+android {
+    QT += androidextras
+}
+requires(qtConfig(udpsocket))
 
 CONFIG += c++11
 
@@ -29,7 +35,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
         main.cpp \
-    applicationcontrol.cpp
+    applicationcontrol.cpp \
+    multicastlock.cpp
 
 RESOURCES += qml.qrc
 
@@ -46,4 +53,11 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 HEADERS += \
     applicationcontrol.h \
-    macros.h
+    macros.h \
+    multicastlock.h
+
+DISTFILES += \
+    android-sources/AndroidManifest.xml \
+    android-sources/src/com/mycompany/qmlplaygroundclient/MulticastLockJniBridgeUtil.java
+
+ANDROID_PACKAGE_SOURCE_DIR = $$PWD/android-sources

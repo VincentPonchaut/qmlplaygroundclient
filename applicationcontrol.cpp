@@ -8,6 +8,9 @@
 #include <QDataStream>
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
+#include <QHostInfo>
+#include <QNetworkDatagram>
+#include <QUdpSocket>
 
 inline QString quoted(const QString& pToQuote) { return "\"" + pToQuote + "\""; }
 
@@ -38,11 +41,27 @@ QString ApplicationControl::messageContent(const QString& message,
 }
 
 ApplicationControl::ApplicationControl(QObject *parent)
-    : QObject(parent)
+    : QObject(parent),
+    groupAddress4(QStringLiteral("239.255.255.250")),
+    groupAddress6(QStringLiteral("ff12::2115"))
 {
     mWritePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/qmlplaygroundclient_cache";
     setStatus("");
     setIsProcessing(false);
+
+    // Prep network elements for discovery
+    if (!udpSocket4.bind(QHostAddress::AnyIPv4, 45454, QUdpSocket::ShareAddress))
+        qCritical() << "Could not bind ipv4";
+    else if (!udpSocket4.joinMulticastGroup(groupAddress4))
+        qCritical() << "Could not join ipv4 multicast group";
+
+
+    if (!udpSocket6.bind(QHostAddress::AnyIPv6, 45454, QUdpSocket::ShareAddress) ||
+        !udpSocket6.joinMulticastGroup(groupAddress6))
+        qDebug() << tr("Listening for multicast messages on IPv4 only");
+
+    connect(&udpSocket4, SIGNAL(readyRead()), this, SLOT(processPendingDatagrams()));
+    connect(&udpSocket6, &QUdpSocket::readyRead, this, &ApplicationControl::processPendingDatagrams);
 }
 
 ApplicationControl::~ApplicationControl()
@@ -201,8 +220,8 @@ void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
 
     // Now uncompress the data
     QZipReader zipReader(zipFilePath);
-    if (!zipReader.status() == QZipReader::NoError ||
-        !zipReader.extractAll(projectDir))
+    if (zipReader.status() != QZipReader::NoError ||
+        (!zipReader.extractAll(projectDir)))
     {
         qDebug() << "Error: could not extract " + zipFilePath;
         setStatus("Error: could not extract " + zipFilePath);
@@ -302,16 +321,6 @@ QString ApplicationControl::localFilePathFromRemoteFilePath(const QString &pRemo
     return localFile;
 }
 
-bool ApplicationControl::uncompressFile(const QString &pZipFile, const QString &pDirectory)
-{
-    QZipReader zipReader(pZipFile);
-    for (QZipReader::FileInfo item : zipReader.fileInfoList())
-    {
-        qDebug() << item.filePath;
-    }
-    return true;
-}
-
 bool ApplicationControl::deleteDirectory(const QString &pDirectory)
 {
     bool success = true;
@@ -331,6 +340,47 @@ bool ApplicationControl::deleteDirectory(const QString &pDirectory)
 
     return success;
 }
+
+void ApplicationControl::processPendingDatagrams()
+{
+    QByteArray datagram;
+
+//    QHostInfo::lookupHost("qmlplaygroundserver", this, [=](QHostInfo info){
+//        qDebug() << "found host info" << info.hostName() << info.errorString() << info.addresses();
+//    });
+
+    QSet<QString> availableServers;
+    QHostAddress hostAddress;
+    quint16 port;
+
+    while (udpSocket4.hasPendingDatagrams())
+    {
+        datagram.resize(int(udpSocket4.pendingDatagramSize()));
+        udpSocket4.readDatagram(datagram.data(), datagram.size(), &hostAddress, &port);
+        qDebug() << "ipv4 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
+    }
+    if (datagram.startsWith("qmlplayground"))
+    {
+        QString hostIp = hostAddress.toString().remove("::ffff:") + ":" + QString::number(12345, 10);
+        availableServers << hostIp;
+    }
+
+    while (udpSocket6.hasPendingDatagrams())
+    {
+        datagram.resize(int(udpSocket6.pendingDatagramSize()));
+        udpSocket6.readDatagram(datagram.data(), datagram.size(), &hostAddress, &port);
+        qDebug() << "ipv6 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
+    }
+    if (datagram.startsWith("qmlplayground"))
+    {
+        QString hostIp = hostAddress.toString().remove("::ffff:") + ":" + QString::number(12345, 10);
+        availableServers << hostIp;
+    }
+
+    if (!availableServers.empty())
+        setAvailableServers(availableServers.toList());
+}
+
 
 QQmlEngine *ApplicationControl::engine() const
 {
