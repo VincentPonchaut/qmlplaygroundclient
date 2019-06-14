@@ -55,6 +55,7 @@ HEADERS += \
     applicationcontrol.h \
     macros.h \
     multicastlock.h
+RC_FILE = img/appicon.rc
 
 DISTFILES += \
     android-sources/AndroidManifest.xml \
