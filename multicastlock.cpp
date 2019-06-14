@@ -1,7 +1,5 @@
 #include "multicastlock.h"
 
-#include "MulticastLock.h"
-
 #include <QLoggingCategory>
 #include <QtGlobal>
 
