@@ -10,7 +10,35 @@ QT_END_NAMESPACE
 
 #include "macros.h"
 #include <QHostAddress>
+#include <QWebSocket>
 #include <QUdpSocket>
+#include <QThread>
+#include <QMutex>
+#include <QQueue>
+
+class AssetImporter : public QThread
+{
+    Q_OBJECT
+
+public:
+    QByteArray messageToProcess;
+    QString errorString;
+
+    // TODO: refactor this one
+    QString mWritePath;
+
+    QString projectDir;
+    QString folderChangeMessage;
+
+    // QThread interface
+protected:
+    virtual void run() override;
+
+    bool deleteDirectory(const QString& pDirectory);
+
+    QMutex mutex;
+};
+
 
 class ApplicationControl: public QObject
 {
@@ -20,8 +48,10 @@ class ApplicationControl: public QObject
     Q_PROPERTY(QString currentFolder READ currentFolder WRITE setCurrentFolder NOTIFY currentFolderChanged)
     PROPERTY(bool, isProcessing, setIsProcessing)
     PROPERTY(QString, status, setStatus)
-    PROPERTY(QStringList, availableServers, setAvailableServers)
+
+    READONLY_PROPERTY(QVariantList, hosts, setHosts)
     PROPERTY(QString, activeServerIp, setActiveServerIp)
+
 
 public:
     explicit ApplicationControl(QObject *parent = nullptr);
@@ -38,6 +68,8 @@ public:
     Q_INVOKABLE void onTextMessageReceived(const QString& pMessage);
     Q_INVOKABLE void onBinaryMessageReceived(const QByteArray& pMessage);
 
+    Q_INVOKABLE void clearComponentCache();
+
     QString currentFile() const;
     QString currentFolder() const;
 
@@ -48,12 +80,19 @@ public:
                                        const QString& tag,
                                        int fromIndex = 0);
 
+    QStringList availableAddresses() const;
+    Q_INVOKABLE QString idFromIp(const QString& pIp);
+
 signals:
     void currentFileChanged(QString currentFile);
     void currentFolderChanged(QString currentFolder);
 
     void startedProcessing(QString message);
     void endedProcessing(QString message);
+
+    void jsonMessage(QString message);
+
+    void availableAddressesChanged(QStringList availableAddresses);
 
 public slots:
     void setCurrentFile(QString currentFile);
@@ -63,10 +102,9 @@ protected:
     void handleFolderChangeMessage(const QString &pMessage);
     void handleFileChangeMessage(const QString &pMessage);
     void handleCurrentFileChangeMessage(const QString &pMessage);
+    void handleAssetImportResults();
 
     QString localFilePathFromRemoteFilePath(const QString& pRemoteFile);
-
-    bool deleteDirectory(const QString& pDirectory);
 
 protected slots:
     void processPendingDatagrams();
@@ -78,10 +116,19 @@ private:
     QString mCurrentProjectPath;
     QQmlEngine *mEngine = nullptr;
 
+    QMap<QString, QString> mServers;
+
+    QWebSocket* socket = nullptr;
+
     QUdpSocket udpSocket4;
     QUdpSocket udpSocket6;
     QHostAddress groupAddress4;
     QHostAddress groupAddress6;
+
+    QQueue<QByteArray> mBinaryMessageQueue;
+    QQueue<QString> mTextMessageQueue;
+
+    AssetImporter mAssetImporter;
 };
 
 #endif // APPLICATIONCONTROL_H

@@ -10,6 +10,7 @@
 #include <private/qzipwriter_p.h>
 #include <QHostInfo>
 #include <QNetworkDatagram>
+#include <QTimer>
 #include <QUdpSocket>
 
 inline QString quoted(const QString& pToQuote) { return "\"" + pToQuote + "\""; }
@@ -40,14 +41,35 @@ QString ApplicationControl::messageContent(const QString& message,
     return message.mid(beginIndex + bTag.length(), endIndex - beginIndex - bTag.length());
 }
 
+QStringList ApplicationControl::availableAddresses() const
+{
+    return mServers.keys();
+}
+
+QString ApplicationControl::idFromIp(const QString &pIp)
+{
+    return mServers[pIp];
+}
+
 ApplicationControl::ApplicationControl(QObject *parent)
     : QObject(parent),
-    groupAddress4(QStringLiteral("239.255.255.250")),
-    groupAddress6(QStringLiteral("ff12::2115"))
+      m_currentFile(""),
+      groupAddress4(QStringLiteral("239.255.255.250")),
+      groupAddress6(QStringLiteral("ff12::2115"))
 {
     mWritePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/qmlplaygroundclient_cache";
     setStatus("");
     setIsProcessing(false);
+
+    // Prep socket for receiving
+    socket = new QWebSocket();
+    socket->setParent(this);
+    connect(this, &ApplicationControl::activeServerIpChanged, [=]()
+    {
+        socket->open(QUrl(QString("ws://%1").arg(m_activeServerIp)));
+    });
+    connect(socket, &QWebSocket::textMessageReceived, this, &ApplicationControl::onTextMessageReceived);
+    connect(socket, &QWebSocket::binaryMessageReceived, this, &ApplicationControl::onBinaryMessageReceived);
 
     // Prep network elements for discovery
     if (!udpSocket4.bind(QHostAddress::AnyIPv4, 45454, QUdpSocket::ShareAddress))
@@ -62,6 +84,9 @@ ApplicationControl::ApplicationControl(QObject *parent)
 
     connect(&udpSocket4, SIGNAL(readyRead()), this, SLOT(processPendingDatagrams()));
     connect(&udpSocket6, &QUdpSocket::readyRead, this, &ApplicationControl::processPendingDatagrams);
+
+    // Asset import
+    connect(&mAssetImporter, &QThread::finished, this, &ApplicationControl::handleAssetImportResults);
 }
 
 ApplicationControl::~ApplicationControl()
@@ -140,53 +165,70 @@ void ApplicationControl::addContextProperty(const QString& pKey, QVariant pData)
 
 void ApplicationControl::onTextMessageReceived(const QString &pMessage)
 {
+    if (this->isProcessing())
+    {
+        mTextMessageQueue.enqueue(pMessage);
+        return;
+    }
+
     // Handle message type
     QString messageType = messageContent(pMessage, "messagetype");
 
     if (messageType == "folderchange")
     {
-        mEngine->trimComponentCache();
-        mEngine->clearComponentCache();
+//        mEngine->trimComponentCache();
+//        mEngine->clearComponentCache();
         handleFolderChangeMessage(pMessage);
     }
     else if (messageType == "filechange")
     {
-        mEngine->trimComponentCache();
-        mEngine->clearComponentCache();
+//        mEngine->trimComponentCache();
+//        mEngine->clearComponentCache();
         handleFileChangeMessage(pMessage);
+    }
+    else if (messageType == "data")
+    {
+        // hand the data message over to the qml
+        QString json = messageContent(pMessage, "json");
+        emit this->jsonMessage(json);
     }
 }
 
-void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
+void AssetImporter::run()
 {
-    setStatus("Loading assets...");
-    setIsProcessing(true);
+    mutex.lock();
+
+    errorString.clear();
+    QString result;
 
     // Prepare a stream to get fields from the message
-    QByteArray message = pMessage;
+    QByteArray message = messageToProcess;
     QDataStream stream(&message, QIODevice::ReadOnly);
 
     // Prepare fields that will be read
     QString readProjectName;
     QByteArray payload;
     qint32 payloadSize;
-    stream >> readProjectName >> payloadSize;
+    stream >> readProjectName
+           >> payloadSize
+           >> folderChangeMessage;
 
     // Read the payload (zip file)
     payload.resize(payloadSize);
     stream.readRawData(payload.data(), payloadSize);
-    qDebug() << "read project name: " << readProjectName << "read payload size: " << payloadSize;
+    qDebug() << "read project name: " << readProjectName
+             << "read payload size: " << payloadSize
+             << "read folderchangemessage: " << folderChangeMessage;
 
 //    QString filePath = "C:/Users/vincent.ponchaut/Desktop/perso/testzipresult_client/zaza.zip";
     QString zipFilePath = mWritePath + QString("/projects/%1/%1.zip").arg(readProjectName);
     QFileInfo fileInfo(zipFilePath);
-    QString projectDir = fileInfo.absolutePath();
+    projectDir = fileInfo.absolutePath();
 
     // Ensure resulting directory exists
     if (!QDir().mkpath(projectDir))
     {
-        setStatus("Error creating " + projectDir);
-        setIsProcessing(false);
+        errorString = "Error creating " + projectDir;
         return;
     }
 
@@ -198,9 +240,8 @@ void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
     // Remove previous file if it exists
     if (fileInfo.exists() && !QFile::remove(zipFilePath))
     {
-        qDebug() << "Error removing " + zipFilePath;
-        setStatus("Error removing " + zipFilePath);
-        setIsProcessing(false);
+        errorString = "Error removing " + zipFilePath;
+        qDebug() << errorString;
         return;
     }
 
@@ -208,9 +249,8 @@ void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
     QFile file(zipFilePath);
     if (!file.open(QIODevice::ReadWrite))
     {
-        qDebug() << "Error: could not open " + zipFilePath;
-        setStatus("Error: could not open " + zipFilePath);
-        setIsProcessing(false);
+        errorString = "Error: could not open " + zipFilePath;
+        qDebug() << errorString;
         return;
     }
 
@@ -221,24 +261,101 @@ void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
     // Now uncompress the data
     QZipReader zipReader(zipFilePath);
     if (zipReader.status() != QZipReader::NoError ||
-        (!zipReader.extractAll(projectDir)))
+       (!zipReader.extractAll(projectDir)))
     {
-        qDebug() << "Error: could not extract " + zipFilePath;
-        setStatus("Error: could not extract " + zipFilePath);
-        setIsProcessing(false);
+        errorString = "Error: could not extract " + zipFilePath;
+        qDebug() << errorString;
         return;
     }
 
     // Remove the zip file
-    file.remove();
+    if (!file.remove())
+    {
+        qDebug() << "Could not remove " << file.fileName();
+    }
 
-    mCurrentProjectPath = projectDir;
-    setStatus("Assets loaded.");
+    mutex.unlock();
+}
+
+bool AssetImporter::deleteDirectory(const QString &pDirectory)
+{
+    bool success = true;
+
+    QDirIterator it(pDirectory, QStringList() << "*", QDir::NoFilter, QDirIterator::Subdirectories);
+    while (it.hasNext())
+    {
+        QString itPath = it.next();
+
+        QFile f(itPath);
+        if (!f.open(QIODevice::ReadWrite))
+            continue;
+
+        success &= f.remove();
+        f.close();
+    }
+
+    return success;
+}
+
+void ApplicationControl::onBinaryMessageReceived(const QByteArray &pMessage)
+{
+    if (this->isProcessing())
+    {
+        mBinaryMessageQueue.enqueue(pMessage);
+        return;
+    }
+
+    setStatus("Loading assets...");
+    setIsProcessing(true);
+
+    if (mAssetImporter.isRunning())
+    {
+        return;
+    }
+
+    mAssetImporter.messageToProcess = pMessage;
+    mAssetImporter.mWritePath = mWritePath;
+    mAssetImporter.start();
+}
+
+void ApplicationControl::clearComponentCache()
+{
+    //    mEngine->clearComponentCache();
+}
+
+void ApplicationControl::handleAssetImportResults()
+{
+    if (mAssetImporter.errorString.isEmpty())
+    {
+        setStatus("Assets loaded.");
+        mAssetImporter.wait(500); // ensure the thread finishes and drops file handles
+
+        mCurrentProjectPath = mAssetImporter.projectDir;
+        if (!mAssetImporter.folderChangeMessage.isEmpty())
+            handleFolderChangeMessage(mAssetImporter.folderChangeMessage);
+    }
+    else
+    {
+        setStatus(mAssetImporter.errorString);
+    }
     setIsProcessing(false);
+
+    // Nevertheless, dequeue messages
+    while (!mTextMessageQueue.isEmpty())
+    {
+        onTextMessageReceived(mTextMessageQueue.dequeue());
+    }
+    // For the moment, we'll try not dequeuing binary messages (they may be spammed by server)
+//    while (!mBinaryMessageQueue.isEmpty())
+//    {
+//        onBinaryMessageReceived(mBinaryMessageQueue.dequeue());
+//    }
 }
 
 void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
 {
+//    qDebug () << "handleFolderChangeMessage" << pMessage;
+
     // Retrieve distant folder name
     QString folderName = messageContent(pMessage, "folder").remove("\n");
     folderName.remove("file:///");
@@ -253,7 +370,7 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
         mCurrentProjectPath = projectPath; // TODO: emit ?
     QDir().mkpath(mCurrentProjectPath);
 
-    // Build file list
+    // Refresh file contents
     int lastFileIndex = 0;
 
     QString currentFileName = messageContent(pMessage, "file");
@@ -273,6 +390,10 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
         currentFileName = messageContent(pMessage, "file", lastFileIndex);
         currentFileContent = messageContent(pMessage, "content", lastFileIndex);
     }
+
+    // Clear component cache
+//    ->trimComponentCache();
+//    mEngine->clearComponentCache();
 
     // Check for a current file change
     handleCurrentFileChangeMessage(pMessage);
@@ -303,8 +424,10 @@ void ApplicationControl::handleCurrentFileChangeMessage(const QString &pMessage)
     if (currentFileDistant.isEmpty())
         return;
 
+    // TODO: fix urls such as C:\Users\user\folder\file:///C:\Users\user\folder\main.qml
     QString currentFileLocal = localFilePathFromRemoteFilePath(currentFileDistant);
     setCurrentFile(""); // Necessary to force a reload of loaders, even after having cleared the qmlengine cache
+//    mEngine->clearComponentCache(); // do not do that here, otherwise the websocket is recreated...
     setCurrentFile(currentFileLocal);
 }
 
@@ -321,64 +444,96 @@ QString ApplicationControl::localFilePathFromRemoteFilePath(const QString &pRemo
     return localFile;
 }
 
-bool ApplicationControl::deleteDirectory(const QString &pDirectory)
-{
-    bool success = true;
-
-    QDirIterator it(pDirectory, QStringList() << "*", QDir::NoFilter, QDirIterator::Subdirectories);
-    while (it.hasNext())
-    {
-        QString itPath = it.next();
-
-        QFile f(itPath);
-        if (!f.open(QIODevice::ReadWrite))
-            continue;
-
-        success &= f.remove();
-        f.close();
-    }
-
-    return success;
-}
-
 void ApplicationControl::processPendingDatagrams()
 {
+    bool shouldNotify = false;
+
     QByteArray datagram;
-
-//    QHostInfo::lookupHost("qmlplaygroundserver", this, [=](QHostInfo info){
-//        qDebug() << "found host info" << info.hostName() << info.errorString() << info.addresses();
-//    });
-
-    QSet<QString> availableServers;
     QHostAddress hostAddress;
     quint16 port;
 
+    std::vector<QUdpSocket*> udpSockets { &udpSocket4, &udpSocket6 };
+
+    for (QUdpSocket* udpSocket: udpSockets)
+    {
+        while (udpSocket->hasPendingDatagrams())
+        {
+            datagram.resize(int(udpSocket->pendingDatagramSize()));
+            udpSocket->readDatagram(datagram.data(), datagram.size(), &hostAddress, &port);
+        }
+        if (datagram.startsWith("qmlplayground"))
+        {
+            QString hostId = messageContent(QString(datagram), "id");
+            QString hostIp = hostAddress.toString().remove("::ffff:") + ":" + QString::number(12345, 10);
+
+            if (!mServers.contains(hostIp) || mServers[hostIp] != hostId)
+            {
+                mServers[hostIp] = hostId;
+                shouldNotify = true;
+                m_hosts.push_back(QVariantMap
+                {
+                  { "address", hostIp },
+                  { "id", hostId }
+                });
+            }
+        }
+    }
+
+    if (shouldNotify)
+    {
+        emit hostsChanged(m_hosts);
+//        emit availableAddressesChanged(mServers.keys());
+    }
+#if 0
     while (udpSocket4.hasPendingDatagrams())
     {
         datagram.resize(int(udpSocket4.pendingDatagramSize()));
         udpSocket4.readDatagram(datagram.data(), datagram.size(), &hostAddress, &port);
-        qDebug() << "ipv4 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
+//        qDebug() << "ipv4 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
     }
     if (datagram.startsWith("qmlplayground"))
     {
+        QString hostId = messageContent(QString(datagram), "id");
         QString hostIp = hostAddress.toString().remove("::ffff:") + ":" + QString::number(12345, 10);
-        availableServers << hostIp;
+
+        RemoteHostData hostData;
+        hostData.setId(hostId);
+        hostData.setAddress(hostIp);
+
+        // Check if an update is needed
+        if (!m_availableHosts.contains(hostData))
+        {
+            m_availableHosts.append(hostData);
+            shouldNotify = true;
+        }
     }
 
     while (udpSocket6.hasPendingDatagrams())
     {
         datagram.resize(int(udpSocket6.pendingDatagramSize()));
         udpSocket6.readDatagram(datagram.data(), datagram.size(), &hostAddress, &port);
-        qDebug() << "ipv6 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
+//        qDebug() << "ipv6 received: " << datagram << "from" << hostAddress.toString() << "@" << port;
     }
     if (datagram.startsWith("qmlplayground"))
     {
+        QString hostId = messageContent(QString(datagram), "id");
         QString hostIp = hostAddress.toString().remove("::ffff:") + ":" + QString::number(12345, 10);
-        availableServers << hostIp;
+
+        RemoteHostData hostData;
+        hostData.setId(hostId);
+        hostData.setAddress(hostIp);
+
+        // Check if an update is needed
+        if (!m_availableHosts.contains(hostData))
+        {
+            m_availableHosts.append(hostData);
+            shouldNotify = true;
+        }
     }
 
-    if (!availableServers.empty())
-        setAvailableServers(availableServers.toList());
+    if (shouldNotify)
+        setAvailableServerIds(m_avai)
+#endif
 }
 
 
@@ -423,3 +578,5 @@ void ApplicationControl::setCurrentFolder(QString currentFolder)
 
     qDebug() << "Current folder changed " << currentFolder;
 }
+
+

@@ -14,7 +14,7 @@
     Q_SIGNALS:\
       void R##Changed(T R); \
     private:\
-      Q_PROPERTY(T R READ R WRITE W NOTIFY R##Changed);\
+      Q_PROPERTY(T R READ R WRITE W NOTIFY R##Changed)\
       T m_##R;
 
 // Read + Write in C++ (Same as above)
@@ -30,7 +30,7 @@
     Q_SIGNALS:\
       void R##Changed(T R); \
     private:\
-      Q_PROPERTY(T R READ R NOTIFY R##Changed);\
+      Q_PROPERTY(T R READ R NOTIFY R##Changed)\
       T m_##R;
 
 #endif // MACROS_H
