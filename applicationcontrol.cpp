@@ -194,6 +194,88 @@ void ApplicationControl::onTextMessageReceived(const QString &pMessage)
     }
 }
 
+bool customExtractAll(QZipReader& zipReader, QString destinationDir)
+{
+    using FileInfo = QZipReader::FileInfo;
+    QDir baseDir(destinationDir);
+
+    // create directories first
+    QVector<FileInfo> allFiles = zipReader.fileInfoList();
+    foreach (FileInfo fi, allFiles)
+    {
+        const QString absPath = destinationDir + "/" + fi.filePath;
+        if (fi.isDir)
+        {
+            if (!baseDir.mkpath(fi.filePath))
+            {
+                qDebug() << "could not create " << fi.filePath << "in" << baseDir.path();
+//                return false;
+                continue;
+            }
+            if (!QFile::setPermissions(absPath, fi.permissions))
+            {
+                qDebug() << "could not set Permissions to" << absPath << "permissions:" << fi.permissions;
+//                return false;
+                continue;
+            }
+        }
+    }
+
+    // set up symlinks
+    foreach (FileInfo fi, allFiles)
+    {
+        const QString absPath = destinationDir + "/" + fi.filePath;
+        if (fi.isSymLink)
+        {
+            QString destination = QFile::decodeName(zipReader.fileData(fi.filePath));
+            if (destination.isEmpty())
+            {
+                qDebug() << absPath << "destination is empty";
+//                return false;
+                continue;
+            }
+
+            QFileInfo linkFi(absPath);
+            if (!QFile::exists(linkFi.absolutePath()))
+                QDir::root().mkpath(linkFi.absolutePath());
+            if (!QFile::link(destination, absPath))
+            {
+                qDebug() << "Could not link" << destination << "to" << absPath;
+//                return false;
+                continue;
+            }
+            /* cannot change permission of links
+                 if (!QFile::setPermissions(absPath, fi.permissions))
+                     return false;
+                 */
+        }
+    }
+
+    foreach (FileInfo fi, allFiles)
+    {
+        const QString absPath = destinationDir + "/" + fi.filePath;
+        if (fi.isFile)
+        {
+            QFileInfo qfi(absPath);
+            if (!QDir().exists(qfi.absolutePath()))
+                QDir().mkpath(qfi.absolutePath());
+
+            QFile f(absPath);
+            if (!f.open(QIODevice::WriteOnly))
+            {
+                qDebug() << "Could not open " << absPath << "[WriteOnly]";
+//                return false;
+                continue;
+            }
+            f.write(zipReader.fileData(fi.filePath));
+            f.setPermissions(fi.permissions);
+            f.close();
+        }
+    }
+
+    return true;
+}
+
 void AssetImporter::run()
 {
     mutex.lock();
@@ -216,9 +298,9 @@ void AssetImporter::run()
     // Read the payload (zip file)
     payload.resize(payloadSize);
     stream.readRawData(payload.data(), payloadSize);
-    qDebug() << "read project name: " << readProjectName
-             << "read payload size: " << payloadSize
-             << "read folderchangemessage: " << folderChangeMessage;
+//    qDebug() << "read project name: " << readProjectName
+//             << "read payload size: " << payloadSize
+//             << "read folderchangemessage: " << folderChangeMessage;
 
 //    QString filePath = "C:/Users/vincent.ponchaut/Desktop/perso/testzipresult_client/zaza.zip";
     QString zipFilePath = mWritePath + QString("/projects/%1/%1.zip").arg(readProjectName);
@@ -260,12 +342,25 @@ void AssetImporter::run()
 
     // Now uncompress the data
     QZipReader zipReader(zipFilePath);
-    if (zipReader.status() != QZipReader::NoError ||
-       (!zipReader.extractAll(projectDir)))
+    if (zipReader.status() != QZipReader::NoError)
+    {
+        QString s = zipReader.status() == QZipReader::NoError ? "NoError" :
+                    zipReader.status() == QZipReader::FileReadError ? "FileReadError" :
+                    zipReader.status() == QZipReader::FileOpenError ? "FileOpenError" :
+                    zipReader.status() == QZipReader::FilePermissionsError ? "FilePermissionsError" :
+                                                                             "FileError";
+        qDebug() << s;
+        return;
+    }
+
+//    while (!zipReader.extractAll(projectDir))
+    while (!customExtractAll(zipReader, projectDir))
     {
         errorString = "Error: could not extract " + zipFilePath;
         qDebug() << errorString;
-        return;
+
+        sleep(1);
+//        return;
     }
 
     // Remove the zip file
