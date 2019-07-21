@@ -58,6 +58,8 @@ ApplicationControl::ApplicationControl(QObject *parent)
       groupAddress6(QStringLiteral("ff12::2115"))
 {
     mWritePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/qmlplaygroundclient_cache";
+    setProjectsPath(mWritePath + "/projects/");
+
     setStatus("");
     setIsProcessing(false);
 
@@ -154,6 +156,47 @@ bool ApplicationControl::writeFileContents(const QString &pFilePath, const QStri
 
     QTextStream stream(&file);
     stream << pFileContents;
+
+    return true;
+}
+
+bool ApplicationControl::deleteFileSystemEntry(const QString &pFilePath)
+{
+    QString filePath = pFilePath;
+    filePath = filePath.replace("file:///", "");
+
+    QFileInfo info(filePath);
+    if (!info.exists())
+    {
+        setDeleteFileSystemEntryError("Invalid path");
+        return false;
+    }
+
+    if (info.isDir())
+    {
+        QDir dir(filePath);
+        if (!dir.removeRecursively())
+        {
+            setDeleteFileSystemEntryError("Could not delete directory.");
+            return false;
+        }
+    }
+    else
+    {
+        QFile file(filePath);
+        if (!file.setPermissions(QFile::WriteOther))
+        {
+            setDeleteFileSystemEntryError("Could not get permissions.");
+            return false;
+        }
+
+        if (!file.remove())
+        {
+            setDeleteFileSystemEntryError(file.errorString());
+            qDebug() << deleteFileSystemEntryError();
+            return false;
+        }
+    }
 
     return true;
 }
@@ -425,7 +468,7 @@ void ApplicationControl::handleAssetImportResults()
         setStatus("Assets loaded.");
         mAssetImporter.wait(500); // ensure the thread finishes and drops file handles
 
-        mCurrentProjectPath = mAssetImporter.projectDir;
+        setCurrentProjectPath(mAssetImporter.projectDir);
         if (!mAssetImporter.folderChangeMessage.isEmpty())
             handleFolderChangeMessage(mAssetImporter.folderChangeMessage);
     }
@@ -459,11 +502,10 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
 
     // Ensure destination folder exists
     QString projectName = folderName.mid(folderName.lastIndexOf("/") + 1);
-//    QDir().mkpath(mWritePath + "/projects/" + projectName);
-    QString projectPath = mWritePath + "/projects/" + projectName;
-    if (mCurrentProjectPath != projectPath)
-        mCurrentProjectPath = projectPath; // TODO: emit ?
-    QDir().mkpath(mCurrentProjectPath);
+
+    QString projectPath =  projectsPath() + projectName;
+    setCurrentProjectPath(projectPath);
+    QDir().mkpath(m_currentProjectPath);
 
     // Refresh file contents
     int lastFileIndex = 0;
@@ -477,7 +519,7 @@ void ApplicationControl::handleFolderChangeMessage(const QString &pMessage)
         localFileName = localFileName.startsWith("/") ? localFileName.remove(0,1) : localFileName;
         qDebug() << "localFileName: " << localFileName;
 
-        createFile(mCurrentProjectPath,
+        createFile(m_currentProjectPath,
                    localFileName,
                    currentFileContent);
 
@@ -506,7 +548,7 @@ void ApplicationControl::handleFileChangeMessage(const QString &pMessage)
     QString currentFileNameLocal = localFilePathFromRemoteFilePath(currentFileName);
 
     // Replace contents
-    createFile(mCurrentProjectPath, currentFileNameLocal, currentFileContent);
+    createFile(m_currentProjectPath, currentFileNameLocal, currentFileContent);
 
     // Check for a current file change
     handleCurrentFileChangeMessage(pMessage);
@@ -534,7 +576,7 @@ QString ApplicationControl::localFilePathFromRemoteFilePath(const QString &pRemo
     if (localFile.startsWith("/"))
         localFile.remove(0,1);
 
-    localFile = "file:///" + mCurrentProjectPath + "/" + localFile;
+    localFile = "file:///" + m_currentProjectPath + "/" + localFile;
 
     return localFile;
 }

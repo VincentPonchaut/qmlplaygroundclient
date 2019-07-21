@@ -5,6 +5,7 @@
 #include <QtWebView>
 
 #include "applicationcontrol.h"
+#include "filesystem.h"
 
 #if defined(Q_OS_ANDROID)
 #include "Multicastlock.h"
@@ -30,6 +31,12 @@ int main(int argc, char *argv[])
     ApplicationControl appControl;
     appControl.setEngine(&engine);
     engine.rootContext()->setContextProperty("appControl", &appControl);
+
+    FsProxyModel fsModel;
+    fsModel.setPath(appControl.projectsPath());
+    engine.rootContext()->setContextProperty("fsModel", &fsModel);
+
+    qmlRegisterUncreatableType<FsEntry>("qmlplayground", 1, 0, "FsEntry", "for kicks");
 
     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
     if (engine.rootObjects().isEmpty())

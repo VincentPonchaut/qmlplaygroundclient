@@ -52,6 +52,9 @@ class ApplicationControl: public QObject
     READONLY_PROPERTY(QVariantList, hosts, setHosts)
     PROPERTY(QString, activeServerIp, setActiveServerIp)
 
+    PROPERTY(QString, currentProjectPath, setCurrentProjectPath)
+    PROPERTY(QString, projectsPath, setProjectsPath)
+    PROPERTY(QString, deleteFileSystemEntryError, setDeleteFileSystemEntryError)
 
 public:
     explicit ApplicationControl(QObject *parent = nullptr);
@@ -62,6 +65,7 @@ public:
 
     Q_INVOKABLE QString readFileContents(const QString& pFilePath);
     Q_INVOKABLE bool writeFileContents(const QString& pFilePath, const QString& pFileContents);
+    Q_INVOKABLE bool deleteFileSystemEntry(const QString& pFilePath);
 
     // TODO
     Q_INVOKABLE void addContextProperty(const QString& pKey, QVariant pData);
@@ -113,7 +117,6 @@ private:
     QString m_currentFile;
     QString m_currentFolder;
     QString mWritePath;
-    QString mCurrentProjectPath;
     QQmlEngine *mEngine = nullptr;
 
     QMap<QString, QString> mServers;

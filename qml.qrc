@@ -3,5 +3,8 @@
         <file>main.qml</file>
         <file>qtquickcontrols2.conf</file>
         <file>Modules.qml</file>
+        <file>img/folder.svg</file>
+        <file>img/folderOpen.svg</file>
+        <file>img/newFile.svg</file>
     </qresource>
 </RCC>
